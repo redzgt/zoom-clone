@@ -3,14 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Zoom Clone</title>
+  <title>Ping: Video call</title>
   <style>
     body { margin: 0; font-family: sans-serif; background: #1c1e21; color: #fff; }
     .toolbar { display: flex; justify-content: center; gap: 1rem; padding: 1rem; background: #2a2c2f; }
     .toolbar button { background: #444; color: #fff; border: none; padding: 10px; border-radius: 5px; cursor: pointer; }
     .toolbar button:hover { background: #666; }
     #videoGrid { display: flex; flex-wrap: wrap; justify-content: center; padding: 1rem; gap: 10px; }
+    .videoContainer { display: flex; flex-direction: column; align-items: center; }
     video { width: 300px; height: 200px; background: black; border-radius: 10px; }
+    .nicknameLabel { margin-top: 5px; color: #ccc; font-size: 0.9rem; }
     .center { text-align: center; margin-top: 2rem; }
     .hidden { display: none; }
   </style>
@@ -28,8 +30,10 @@
       <h2>Room ID: <span id="roomDisplay"></span></h2>
     </div>
     <div id="videoGrid">
-      <video id="localVideo" autoplay playsinline muted></video>
-      <video id="remoteVideo" autoplay playsinline></video>
+      <div class="videoContainer">
+        <video id="localVideo" autoplay playsinline muted></video>
+        <div class="nicknameLabel" id="localNickname"></div>
+      </div>
     </div>
     <div class="toolbar">
       <button onclick="toggleAudio()" id="audioBtn">Unmute</button>
@@ -45,6 +49,10 @@
     let localStream;
     let peerConnection;
     let screenTrack;
+    let nickname;
+    let remoteVideoEl;
+    let remoteLabelEl;
+
     const config = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -63,11 +71,13 @@
 
     function joinCall() {
       const roomId = document.getElementById('roomInput').value.trim();
-      const nickname = document.getElementById('nicknameInput').value.trim() || 'Anonymous';
+      nickname = document.getElementById('nicknameInput').value.trim() || 'Anonymous';
       if (!roomId) return alert('Enter a Room ID');
+
       document.getElementById('setup').classList.add('hidden');
       document.getElementById('mainUI').classList.remove('hidden');
       document.getElementById('roomDisplay').innerText = roomId;
+      document.getElementById('localNickname').innerText = nickname + ' (You)';
 
       socket = io();
       socket.emit("join-room", { roomId, userId: Math.random().toString(36).substring(2), nickname });
@@ -84,6 +94,22 @@
             });
           }
         });
+      });
+
+      socket.on("user-joined", ({ nickname }) => {
+        if (!remoteVideoEl) {
+          const container = document.createElement('div');
+          container.className = 'videoContainer';
+          remoteVideoEl = document.createElement('video');
+          remoteVideoEl.autoplay = true;
+          remoteVideoEl.playsInline = true;
+          remoteLabelEl = document.createElement('div');
+          remoteLabelEl.className = 'nicknameLabel';
+          remoteLabelEl.textContent = nickname;
+          container.appendChild(remoteVideoEl);
+          container.appendChild(remoteLabelEl);
+          document.getElementById('videoGrid').appendChild(container);
+        }
       });
 
       socket.on("offer", async ({ offer }) => {
@@ -103,14 +129,6 @@
           await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
         }
       });
-
-      socket.on("screen-share", ({ track }) => {
-        // screen sharing stream handled by peer connection
-      });
-
-      socket.on("stop-screen-share", () => {
-        // logic to remove screen share from remote video
-      });
     }
 
     function setupPeer() {
@@ -123,7 +141,22 @@
       };
 
       peerConnection.ontrack = e => {
-        document.getElementById("remoteVideo").srcObject = e.streams[0];
+        if (!remoteVideoEl) {
+          const container = document.createElement('div');
+          container.className = 'videoContainer';
+          remoteVideoEl = document.createElement('video');
+          remoteVideoEl.autoplay = true;
+          remoteVideoEl.playsInline = true;
+          remoteVideoEl.srcObject = e.streams[0];
+          remoteLabelEl = document.createElement('div');
+          remoteLabelEl.className = 'nicknameLabel';
+          remoteLabelEl.textContent = "Remote User";
+          container.appendChild(remoteVideoEl);
+          container.appendChild(remoteLabelEl);
+          document.getElementById('videoGrid').appendChild(container);
+        } else {
+          remoteVideoEl.srcObject = e.streams[0];
+        }
       };
     }
 
@@ -135,26 +168,26 @@
     }
 
     function toggleVideo() {
-      const videoTrack = localStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        document.getElementById("videoBtn").innerText = videoTrack.enabled ? "Stop Video" : "Start Video";
-      } else {
-        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-          const newTrack = stream.getVideoTracks()[0];
-          localStream.addTrack(newTrack);
-          peerConnection.addTrack(newTrack, localStream);
-          document.getElementById("localVideo").srcObject = localStream;
-          document.getElementById("videoBtn").innerText = "Stop Video";
-        });
+      const existing = localStream.getVideoTracks()[0];
+      if (existing) {
+        existing.enabled = !existing.enabled;
+        document.getElementById("videoBtn").innerText = existing.enabled ? "Stop Video" : "Start Video";
+        return;
       }
+      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        const track = stream.getVideoTracks()[0];
+        localStream.addTrack(track);
+        peerConnection.addTrack(track, localStream);
+        document.getElementById("localVideo").srcObject = localStream;
+        document.getElementById("videoBtn").innerText = "Stop Video";
+      });
     }
 
     function startScreenShare() {
       navigator.mediaDevices.getDisplayMedia({ video: true }).then(stream => {
         screenTrack = stream.getVideoTracks()[0];
         const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
-        sender.replaceTrack(screenTrack);
+        if (sender) sender.replaceTrack(screenTrack);
         screenTrack.onended = () => stopScreenShare();
       });
     }
