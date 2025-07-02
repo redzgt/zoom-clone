@@ -22,25 +22,25 @@
     let peerConnection;
     let roomId;
     const userId = Math.floor(Math.random() * 100000).toString();
-    const config = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
-  ]
-};
 
+    const config = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ]
+    };
 
     function createRoom() {
-      const newRoomId = Math.random().toString(36).substring(2, 8); // random 6-char
+      const newRoomId = Math.random().toString(36).substring(2, 8);
       document.getElementById("roomIdInput").value = newRoomId;
       joinCall();
     }
@@ -52,20 +52,24 @@
       document.getElementById("videoSection").style.display = "block";
       document.getElementById("roomDisplay").innerText = roomId;
 
-      const socket = io("https://zoom-clone-yj4l.onrender.com"); // Replace with your actual Render URL
+      socket = io("https://your-app-name.onrender.com"); // change to your Render URL
+
       socket.emit("join-room", { roomId, userId });
 
       startVideo();
 
-      socket.on("user-joined", async () => {
+      socket.on("joined-room", ({ initiator }) => {
         setupPeer();
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        socket.emit("offer", { offer });
+        if (initiator) {
+          peerConnection.createOffer().then(offer => {
+            peerConnection.setLocalDescription(offer);
+            socket.emit("offer", { offer });
+          });
+        }
       });
 
       socket.on("offer", async ({ offer }) => {
-        setupPeer();
+        if (!peerConnection) setupPeer();
         await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
