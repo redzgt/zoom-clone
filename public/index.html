@@ -42,20 +42,19 @@
       <button onclick="startScreenShare()">Share Screen</button>
       <button onclick="endCall()" style="background: red;">End</button>
     </div>
-  </div>
-
-  <div id="chatBox" class="hidden">
-    <div id="chatMessages"></div>
-    <div id="chatInput">
-      <input id="chatText" placeholder="Type a message..." />
-      <button onclick="sendChat()">Send</button>
+    <div id="chatBox" class="hidden">
+      <div id="chatMessages"></div>
+      <div id="chatInput">
+        <input id="chatText" placeholder="Type a message..." />
+        <button onclick="sendChat()">Send</button>
+      </div>
     </div>
   </div>
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
     let socket;
-    let localStream;
+    let localStream = new MediaStream();
     let peerConnections = {}; // for multi-user support
     let nickname;
     const videoGrid = document.getElementById('videoGrid');
@@ -89,8 +88,8 @@
       socket.emit("join-room", { roomId, userId: socket.id, nickname });
 
       navigator.mediaDevices.getUserMedia({ video: false, audio: true }).then(stream => {
-        localStream = stream;
-        addVideoStream(socket.id, stream, nickname + ' (You)');
+        stream.getTracks().forEach(track => localStream.addTrack(track));
+        addVideoStream(socket.id, localStream, nickname + ' (You)');
       });
 
       socket.on("user-joined", ({ userId, nickname }) => {
@@ -187,12 +186,13 @@
     }
 
     function toggleVideo() {
-      const existing = localStream.getVideoTracks()[0];
-      if (existing) {
-        existing.enabled = !existing.enabled;
-        document.getElementById("videoBtn").innerText = existing.enabled ? "Stop Video" : "Start Video";
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        document.getElementById("videoBtn").innerText = videoTrack.enabled ? "Stop Video" : "Start Video";
         return;
       }
+
       navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
         const track = stream.getVideoTracks()[0];
         localStream.addTrack(track);
