@@ -54,7 +54,7 @@
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
     let socket;
-    let localStream = new MediaStream();
+    let localStream;
     let peerConnections = {}; // for multi-user support
     let nickname;
     const videoGrid = document.getElementById('videoGrid');
@@ -81,71 +81,71 @@
 
       document.getElementById('setup').classList.add('hidden');
       document.getElementById('mainUI').classList.remove('hidden');
-      document.getElementById('chatBox').classList.remove('hidden');
       document.getElementById('roomDisplay').innerText = roomId;
+      document.getElementById('chatBox').classList.remove('hidden');
 
       socket = io();
       socket.emit("join-room", { roomId, userId: socket.id, nickname });
 
-      navigator.mediaDevices.getUserMedia({ video: false, audio: true }).then(stream => {
-        stream.getTracks().forEach(track => localStream.addTrack(track));
-        addVideoStream(socket.id, localStream, nickname + ' (You)');
-      });
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+        localStream = stream;
+        addVideoStream(socket.id, stream, nickname + ' (You)', true);
 
-      socket.on("user-joined", ({ userId, nickname }) => {
-        const pc = new RTCPeerConnection(config);
-        peerConnections[userId] = pc;
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        socket.on("user-joined", ({ userId, nickname }) => {
+          const pc = new RTCPeerConnection(config);
+          peerConnections[userId] = pc;
+          localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-        pc.onicecandidate = e => {
-          if (e.candidate) socket.emit("ice-candidate", { to: userId, candidate: e.candidate });
-        };
+          pc.onicecandidate = e => {
+            if (e.candidate) socket.emit("ice-candidate", { to: userId, candidate: e.candidate });
+          };
 
-        pc.ontrack = e => {
-          addVideoStream(userId, e.streams[0], nickname);
-        };
+          pc.ontrack = e => {
+            addVideoStream(userId, e.streams[0], nickname);
+          };
 
-        pc.createOffer().then(offer => {
-          pc.setLocalDescription(offer);
-          socket.emit("offer", { to: userId, offer });
+          pc.createOffer().then(offer => {
+            pc.setLocalDescription(offer);
+            socket.emit("offer", { to: userId, offer });
+          });
         });
-      });
 
-      socket.on("offer", async ({ from, offer }) => {
-        const pc = new RTCPeerConnection(config);
-        peerConnections[from] = pc;
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        socket.on("offer", async ({ from, offer }) => {
+          const pc = new RTCPeerConnection(config);
+          peerConnections[from] = pc;
+          localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-        pc.onicecandidate = e => {
-          if (e.candidate) socket.emit("ice-candidate", { to: from, candidate: e.candidate });
-        };
+          pc.onicecandidate = e => {
+            if (e.candidate) socket.emit("ice-candidate", { to: from, candidate: e.candidate });
+          };
 
-        pc.ontrack = e => {
-          addVideoStream(from, e.streams[0], "Remote User");
-        };
+          pc.ontrack = e => {
+            addVideoStream(from, e.streams[0], "Remote User");
+          };
 
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit("answer", { to: from, answer });
-      });
+          await pc.setRemoteDescription(new RTCSessionDescription(offer));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit("answer", { to: from, answer });
+        });
 
-      socket.on("answer", async ({ from, answer }) => {
-        await peerConnections[from].setRemoteDescription(new RTCSessionDescription(answer));
-      });
+        socket.on("answer", async ({ from, answer }) => {
+          await peerConnections[from].setRemoteDescription(new RTCSessionDescription(answer));
+        });
 
-      socket.on("ice-candidate", async ({ from, candidate }) => {
-        if (peerConnections[from]) {
-          await peerConnections[from].addIceCandidate(new RTCIceCandidate(candidate));
-        }
-      });
+        socket.on("ice-candidate", async ({ from, candidate }) => {
+          if (peerConnections[from]) {
+            await peerConnections[from].addIceCandidate(new RTCIceCandidate(candidate));
+          }
+        });
 
-      socket.on("chat", ({ from, text }) => {
-        const chatMessages = document.getElementById("chatMessages");
-        const div = document.createElement("div");
-        div.innerText = `${from}: ${text}`;
-        chatMessages.appendChild(div);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        socket.on("chat", ({ from, text }) => {
+          const chatMessages = document.getElementById("chatMessages");
+          const div = document.createElement("div");
+          div.innerText = `${from}: ${text}`;
+          chatMessages.appendChild(div);
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+        });
       });
     }
 
@@ -161,7 +161,7 @@
       document.getElementById("chatText").value = "";
     }
 
-    function addVideoStream(id, stream, label) {
+    function addVideoStream(id, stream, label, muted = false) {
       if (document.getElementById(`video-${id}`)) return;
       const container = document.createElement('div');
       container.className = 'videoContainer';
@@ -170,6 +170,7 @@
       video.playsInline = true;
       video.srcObject = stream;
       video.id = `video-${id}`;
+      video.muted = muted;
       const labelDiv = document.createElement('div');
       labelDiv.className = 'nicknameLabel';
       labelDiv.innerText = label;
