@@ -15,6 +15,12 @@
     .nicknameLabel { margin-top: 5px; color: #ccc; font-size: 0.9rem; }
     .center { text-align: center; margin-top: 2rem; }
     .hidden { display: none; }
+    #chatBox { position: fixed; right: 0; top: 0; bottom: 0; width: 300px; background: #111; border-left: 2px solid #333; display: flex; flex-direction: column; }
+    #chatMessages { flex: 1; overflow-y: auto; padding: 10px; }
+    #chatMessages div { margin-bottom: 10px; }
+    #chatInput { display: flex; }
+    #chatInput input { flex: 1; padding: 10px; border: none; }
+    #chatInput button { padding: 10px; background: #444; color: white; border: none; }
   </style>
 </head>
 <body>
@@ -29,12 +35,7 @@
     <div class="center">
       <h2>Room ID: <span id="roomDisplay"></span></h2>
     </div>
-    <div id="videoGrid">
-      <div class="videoContainer">
-        <video id="localVideo" autoplay playsinline muted></video>
-        <div class="nicknameLabel" id="localNickname"></div>
-      </div>
-    </div>
+    <div id="videoGrid"></div>
     <div class="toolbar">
       <button onclick="toggleAudio()" id="audioBtn">Unmute</button>
       <button onclick="toggleVideo()" id="videoBtn">Start Video</button>
@@ -43,16 +44,21 @@
     </div>
   </div>
 
+  <div id="chatBox" class="hidden">
+    <div id="chatMessages"></div>
+    <div id="chatInput">
+      <input id="chatText" placeholder="Type a message..." />
+      <button onclick="sendChat()">Send</button>
+    </div>
+  </div>
+
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
     let socket;
     let localStream;
-    let peerConnection;
-    let screenTrack;
+    let peerConnections = {}; // for multi-user support
     let nickname;
-    let remoteVideoEl;
-    let remoteLabelEl;
-
+    const videoGrid = document.getElementById('videoGrid');
     const config = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -76,88 +82,101 @@
 
       document.getElementById('setup').classList.add('hidden');
       document.getElementById('mainUI').classList.remove('hidden');
+      document.getElementById('chatBox').classList.remove('hidden');
       document.getElementById('roomDisplay').innerText = roomId;
-      document.getElementById('localNickname').innerText = nickname + ' (You)';
 
       socket = io();
-      socket.emit("join-room", { roomId, userId: Math.random().toString(36).substring(2), nickname });
+      socket.emit("join-room", { roomId, userId: socket.id, nickname });
 
-      socket.on("joined-room", ({ initiator }) => {
-        navigator.mediaDevices.getUserMedia({ video: false, audio: true }).then(stream => {
-          localStream = stream;
-          document.getElementById("localVideo").srcObject = stream;
-          setupPeer();
-          if (initiator) {
-            peerConnection.createOffer().then(offer => {
-              peerConnection.setLocalDescription(offer);
-              socket.emit("offer", { offer });
-            });
-          }
+      navigator.mediaDevices.getUserMedia({ video: false, audio: true }).then(stream => {
+        localStream = stream;
+        addVideoStream(socket.id, stream, nickname + ' (You)');
+      });
+
+      socket.on("user-joined", ({ userId, nickname }) => {
+        const pc = new RTCPeerConnection(config);
+        peerConnections[userId] = pc;
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+        pc.onicecandidate = e => {
+          if (e.candidate) socket.emit("ice-candidate", { to: userId, candidate: e.candidate });
+        };
+
+        pc.ontrack = e => {
+          addVideoStream(userId, e.streams[0], nickname);
+        };
+
+        pc.createOffer().then(offer => {
+          pc.setLocalDescription(offer);
+          socket.emit("offer", { to: userId, offer });
         });
       });
 
-      socket.on("user-joined", ({ nickname }) => {
-        if (!remoteVideoEl) {
-          const container = document.createElement('div');
-          container.className = 'videoContainer';
-          remoteVideoEl = document.createElement('video');
-          remoteVideoEl.autoplay = true;
-          remoteVideoEl.playsInline = true;
-          remoteLabelEl = document.createElement('div');
-          remoteLabelEl.className = 'nicknameLabel';
-          remoteLabelEl.textContent = nickname;
-          container.appendChild(remoteVideoEl);
-          container.appendChild(remoteLabelEl);
-          document.getElementById('videoGrid').appendChild(container);
+      socket.on("offer", async ({ from, offer }) => {
+        const pc = new RTCPeerConnection(config);
+        peerConnections[from] = pc;
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+        pc.onicecandidate = e => {
+          if (e.candidate) socket.emit("ice-candidate", { to: from, candidate: e.candidate });
+        };
+
+        pc.ontrack = e => {
+          addVideoStream(from, e.streams[0], "Remote User");
+        };
+
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("answer", { to: from, answer });
+      });
+
+      socket.on("answer", async ({ from, answer }) => {
+        await peerConnections[from].setRemoteDescription(new RTCSessionDescription(answer));
+      });
+
+      socket.on("ice-candidate", async ({ from, candidate }) => {
+        if (peerConnections[from]) {
+          await peerConnections[from].addIceCandidate(new RTCIceCandidate(candidate));
         }
       });
 
-      socket.on("offer", async ({ offer }) => {
-        setupPeer();
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        socket.emit("answer", { answer });
-      });
-
-      socket.on("answer", async ({ answer }) => {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-      });
-
-      socket.on("ice-candidate", async (candidate) => {
-        if (peerConnection && candidate) {
-          await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        }
+      socket.on("chat", ({ from, text }) => {
+        const chatMessages = document.getElementById("chatMessages");
+        const div = document.createElement("div");
+        div.innerText = `${from}: ${text}`;
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
       });
     }
 
-    function setupPeer() {
-      if (peerConnection) return;
-      peerConnection = new RTCPeerConnection(config);
-      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    function sendChat() {
+      const text = document.getElementById("chatText").value;
+      if (!text.trim()) return;
+      socket.emit("chat", { text, from: nickname });
+      const chatMessages = document.getElementById("chatMessages");
+      const div = document.createElement("div");
+      div.innerText = `You: ${text}`;
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      document.getElementById("chatText").value = "";
+    }
 
-      peerConnection.onicecandidate = e => {
-        if (e.candidate) socket.emit("ice-candidate", e.candidate);
-      };
-
-      peerConnection.ontrack = e => {
-        if (!remoteVideoEl) {
-          const container = document.createElement('div');
-          container.className = 'videoContainer';
-          remoteVideoEl = document.createElement('video');
-          remoteVideoEl.autoplay = true;
-          remoteVideoEl.playsInline = true;
-          remoteVideoEl.srcObject = e.streams[0];
-          remoteLabelEl = document.createElement('div');
-          remoteLabelEl.className = 'nicknameLabel';
-          remoteLabelEl.textContent = "Remote User";
-          container.appendChild(remoteVideoEl);
-          container.appendChild(remoteLabelEl);
-          document.getElementById('videoGrid').appendChild(container);
-        } else {
-          remoteVideoEl.srcObject = e.streams[0];
-        }
-      };
+    function addVideoStream(id, stream, label) {
+      if (document.getElementById(`video-${id}`)) return;
+      const container = document.createElement('div');
+      container.className = 'videoContainer';
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+      video.id = `video-${id}`;
+      const labelDiv = document.createElement('div');
+      labelDiv.className = 'nicknameLabel';
+      labelDiv.innerText = label;
+      container.appendChild(video);
+      container.appendChild(labelDiv);
+      videoGrid.appendChild(container);
     }
 
     function toggleAudio() {
@@ -177,29 +196,32 @@
       navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
         const track = stream.getVideoTracks()[0];
         localStream.addTrack(track);
-        peerConnection.addTrack(track, localStream);
-        document.getElementById("localVideo").srcObject = localStream;
+        Object.values(peerConnections).forEach(pc => pc.addTrack(track, localStream));
         document.getElementById("videoBtn").innerText = "Stop Video";
       });
     }
 
     function startScreenShare() {
       navigator.mediaDevices.getDisplayMedia({ video: true }).then(stream => {
-        screenTrack = stream.getVideoTracks()[0];
-        const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
-        if (sender) sender.replaceTrack(screenTrack);
+        const screenTrack = stream.getVideoTracks()[0];
+        Object.values(peerConnections).forEach(pc => {
+          const sender = pc.getSenders().find(s => s.track.kind === 'video');
+          if (sender) sender.replaceTrack(screenTrack);
+        });
         screenTrack.onended = () => stopScreenShare();
       });
     }
 
     function stopScreenShare() {
       const videoTrack = localStream.getVideoTracks()[0];
-      const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
-      if (videoTrack && sender) sender.replaceTrack(videoTrack);
+      Object.values(peerConnections).forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track.kind === 'video');
+        if (sender && videoTrack) sender.replaceTrack(videoTrack);
+      });
     }
 
     function endCall() {
-      peerConnection.close();
+      Object.values(peerConnections).forEach(pc => pc.close());
       socket.disconnect();
       window.location.reload();
     }
