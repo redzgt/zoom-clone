@@ -1,26 +1,36 @@
+// === server.js === (Node.js + Socket.IO signaling server with join count)
+
 const express = require("express");
 const http = require("http");
 const socketIo = require("socket.io");
-const path = require("path");
 const cors = require("cors");
 
 const app = express();
 app.use(cors());
-app.use(express.static(path.join(__dirname, "public")));
 
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = socketIo(server, {
+  cors: { origin: "*" }
+});
 
-io.on("connection", (socket) => {
-  console.log("A user connected");
+io.on("connection", socket => {
+  console.log("New client connected");
 
   socket.on("join-room", ({ roomId, userId }) => {
     socket.join(roomId);
+
+    const users = io.sockets.adapter.rooms.get(roomId);
+    const numUsers = users ? users.size : 0;
+
+    console.log(`User ${userId} joined room ${roomId} (${numUsers} total)`);
+
     socket.to(roomId).emit("user-joined", userId);
 
-    socket.on("offer", (data) => socket.to(roomId).emit("offer", data));
-    socket.on("answer", (data) => socket.to(roomId).emit("answer", data));
-    socket.on("ice-candidate", (data) => socket.to(roomId).emit("ice-candidate", data));
+    socket.emit("joined-room", { initiator: numUsers > 1 });
+
+    socket.on("offer", data => socket.to(roomId).emit("offer", data));
+    socket.on("answer", data => socket.to(roomId).emit("answer", data));
+    socket.on("ice-candidate", data => socket.to(roomId).emit("ice-candidate", data));
 
     socket.on("disconnect", () => {
       socket.to(roomId).emit("user-disconnected", userId);
@@ -28,5 +38,5 @@ io.on("connection", (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => console.log(`Signaling server running on port ${PORT}`));
