@@ -37,7 +37,7 @@
       document.getElementById("videoSection").style.display = "block";
       document.getElementById("roomDisplay").innerText = roomId;
 
-      socket = io();
+      const socket = io("https://zoom-clone-yj4l.onrender.com"); // Replace with your actual Render URL
       socket.emit("join-room", { roomId, userId });
 
       startVideo();
