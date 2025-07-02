@@ -52,7 +52,7 @@
       document.getElementById("videoSection").style.display = "block";
       document.getElementById("roomDisplay").innerText = roomId;
 
-      socket = io("https://your-app-name.onrender.com"); // change to your Render URL
+      socket = io("https://zoom-clone-yj4l.onrender.com"); // change to your Render URL
 
       socket.emit("join-room", { roomId, userId });
 
